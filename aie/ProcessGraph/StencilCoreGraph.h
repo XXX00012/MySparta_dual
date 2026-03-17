@@ -13,12 +13,10 @@ public:
     kernel k_lap;
     kernel k_flux;
 
-
     StencilCoreGraph() {
 #if defined(__AIESIM__) || defined(__X86SIM__) || defined(__ADF_FRONTEND__)
         k_lap   = kernel::create(hdiff_lap);
         k_flux  = kernel::create(hdiff_flux);
-    
 
         source(k_lap)   = "ProcessUnit/hdiff_lap.cc";
         source(k_flux)  = "ProcessUnit/hdiff_flux.cc";
@@ -28,11 +26,9 @@ public:
 
         runtime<ratio>(k_lap)   = 0.9;
         runtime<ratio>(k_flux)  = 0.9;
-   
 
         location<kernel>(k_lap)   = tile(7, 1);
         location<kernel>(k_flux)  = tile(7, 2);
-  
 
         connect(in[0], k_lap.in[0]);
         connect(in[1], k_lap.in[1]);
@@ -61,12 +57,12 @@ public:
         dimensions(k_flux.in[2]) = {COL};
 
         for (int i = 0; i < 4; ++i) {
-            dimensions(k_lap.out[i])      = {COL};
-            dimensions(k_flux.in[i + 3])  = {COL};
+            dimensions(k_lap.out[i])      = {COL + 4};
+            dimensions(k_flux.in[i + 3])  = {COL + 4};
         }
 
-        dimensions(k_flux.out[0])  = {COL};
-        dimensions(out)            = {COL};
+        dimensions(k_flux.out[0]) = {COL + 8};
+        dimensions(out)           = {COL + 8};
 #endif
 
     }

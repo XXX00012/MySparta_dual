@@ -8,6 +8,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include <adf.h>
+#include <aie_api/aie.hpp>
 #include <cstdint>
 #include "ProcessUnit/include.h"
 #include "ProcessUnit/hdiff.h"
@@ -15,6 +16,35 @@
 using namespace adf;
 
 #define kernel_load 14
+
+namespace {
+
+constexpr int FLUX_DATA_WORDS = COL;
+constexpr int FLUX_META_WORDS = 8;  // lap_start/lap_end + flux_start/flux_end
+
+inline uint64_t load_u64_from_i32_pair(const int32_t* p) {
+  const uint64_t lo = static_cast<uint64_t>(static_cast<uint32_t>(p[0]));
+  const uint64_t hi = static_cast<uint64_t>(static_cast<uint32_t>(p[1]));
+  return lo | (hi << 32);
+}
+
+inline void store_u64_to_i32_tail(int32_t* p, uint64_t v) {
+  p[0] = static_cast<int32_t>(static_cast<uint32_t>(v & 0xffffffffULL));
+  p[1] = static_cast<int32_t>(static_cast<uint32_t>((v >> 32) & 0xffffffffULL));
+}
+
+inline void store_kernel_time_tail(int32_t* base,
+                                   uint64_t lap_start,
+                                   uint64_t lap_end,
+                                   uint64_t flux_start,
+                                   uint64_t flux_end) {
+  store_u64_to_i32_tail(base + 0, lap_start);
+  store_u64_to_i32_tail(base + 2, lap_end);
+  store_u64_to_i32_tail(base + 4, flux_start);
+  store_u64_to_i32_tail(base + 6, flux_end);
+}
+
+} // namespace
 
 void hdiff_flux( input_buffer<int32_t>& row1,
                  input_buffer<int32_t>& row2,
@@ -37,6 +67,13 @@ void hdiff_flux( input_buffer<int32_t>& row1,
   v8int32* __restrict row1_ptr = (v8int32 *)row1.data();
   v8int32* __restrict row2_ptr = (v8int32 *)row2.data();
   v8int32* __restrict row3_ptr = (v8int32 *)row3.data();
+
+  const int32_t* lap_meta = flux_forward1.data() + FLUX_DATA_WORDS;
+  const uint64_t lap_start = load_u64_from_i32_pair(lap_meta + 0);
+  const uint64_t lap_end   = load_u64_from_i32_pair(lap_meta + 2);
+
+  aie::tile tile = aie::tile::current();
+  const uint64_t flux_start = tile.cycles();
 
   v16int32 data_buf1 = null_v16int32();
   v16int32 data_buf2 = null_v16int32();
@@ -144,11 +181,15 @@ void hdiff_flux( input_buffer<int32_t>& row1,
                            concat(coeffs1, undef_v8int32()), 0, 0x76543210);
 
       // LOAD DATA FOR NEXT ITERATION
-
       row2_ptr = ((v8int32 *)(row2.data())) + i + 1;
       data_buf2 = upd_w(data_buf2, 0, *row2_ptr++);
       data_buf2 = upd_w(data_buf2, 1, *row2_ptr);
 
       *ptr_out++ = srs(final_output, 0);
     }
+
+  const uint64_t flux_end = tile.cycles();
+  store_kernel_time_tail(out.data() + FLUX_DATA_WORDS,
+                         lap_start, lap_end,
+                         flux_start, flux_end);
 }
