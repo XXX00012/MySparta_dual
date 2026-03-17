@@ -4,7 +4,7 @@
 #include <adf/adf_api/XRTConfig.h>
 #include <experimental/xrt_device.h>
 #include <experimental/xrt_kernel.h>
-// ⚠️ 彻底删除了引发报错的 xrt_aie.h
+
 
 #include <chrono>
 #include <cstdint>
