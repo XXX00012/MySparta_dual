@@ -27,8 +27,8 @@ public:
         runtime<ratio>(k_lap)   = 0.9;
         runtime<ratio>(k_flux)  = 0.9;
 
-        location<kernel>(k_lap)   = tile(7, 1);
-        location<kernel>(k_flux)  = tile(7, 2);
+        location<kernel>(k_lap)   = tile(7, 0);
+        location<kernel>(k_flux)  = tile(7, 1);
 
         connect(in[0], k_lap.in[0]);
         connect(in[1], k_lap.in[1]);

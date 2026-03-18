@@ -47,29 +47,6 @@ bool load_stream_file(const std::string& path, int32_t* buf, int elems) {
     return true;
 }
 
-bool load_stream_file(const std::string& path, int32_t* buf, int elems, int stride_words) {
-    std::ifstream fin(path);
-    if (!fin.is_open()) {
-        std::fprintf(stderr, "[warn] cannot open %s\n", path.c_str());
-        return false;
-    }
-
-    long long v = 0;
-    int cnt = 0;
-    while (fin >> v) {
-        if (cnt >= elems) break;
-        buf[cnt++] = static_cast<int32_t>(v);
-    }
-
-    if (cnt != elems) {
-        std::fprintf(stderr,
-                     "[warn] %s element count mismatch: got %d, expect %d\n",
-                     path.c_str(), cnt, elems);
-        return false;
-    }
-    return true;
-}
-
 void fill_ramp_inputs(int32_t* inbuf[NUM_INPUTS], int elems_per_input) {
     for (int k = 0; k < NUM_INPUTS; ++k) {
         for (int i = 0; i < elems_per_input; ++i) {
@@ -113,35 +90,8 @@ inline uint64_t load_u64_from_i32_pair(const int32_t* p) {
     return lo | (hi << 32);
 }
 
-void summarize_cycles(const char* name, const uint64_t* cycles, int iter_cnt) {
-    uint64_t total = 0;
-    uint64_t max_v = 0;
-    uint64_t min_v = (iter_cnt > 0) ? cycles[0] : 0;
-
-    for (int i = 0; i < iter_cnt; ++i) {
-        total += cycles[i];
-        if (cycles[i] > max_v) max_v = cycles[i];
-        if (cycles[i] < min_v) min_v = cycles[i];
-    }
-
-    const double avg_cycles = (iter_cnt > 0) ? static_cast<double>(total) / iter_cnt : 0.0;
-    const double total_us = static_cast<double>(total) * 1.0e6 / AIE_FREQ_HZ;
-    const double avg_us = avg_cycles * 1.0e6 / AIE_FREQ_HZ;
-
-    std::printf("%s cycles total      : %llu\n", name, static_cast<unsigned long long>(total));
-    std::printf("%s cycles avg/iter   : %.3f\n", name, avg_cycles);
-    std::printf("%s cycles min/iter   : %llu\n", name, static_cast<unsigned long long>(min_v));
-    std::printf("%s cycles max/iter   : %llu\n", name, static_cast<unsigned long long>(max_v));
-    std::printf("%s time total        : %.3f us\n", name, total_us);
-    std::printf("%s time avg/iter     : %.3f us\n", name, avg_us);
-}
-
-void print_cycle_preview(const char* tag, const uint64_t* cycles, int n) {
-    std::printf("%s", tag);
-    for (int i = 0; i < n; ++i) {
-        std::printf(" %llu", static_cast<unsigned long long>(cycles[i]));
-    }
-    std::printf("\n");
+inline double cycles_to_us(uint64_t cycles) {
+    return static_cast<double>(cycles) * 1.0e6 / AIE_FREQ_HZ;
 }
 
 } // namespace
@@ -166,7 +116,7 @@ int main(int argc, char* argv[]) {
 
     const int elems_per_input = iter_cnt * COL;
     const int out_elems       = iter_cnt * OUTPUT_RECORD_WORDS;
-    const std::size_t bytes_per_input = elems_per_input * sizeof(int32_t);
+    const std::size_t bytes_per_input = static_cast<std::size_t>(elems_per_input) * sizeof(int32_t);
     const std::size_t out_bytes       = static_cast<std::size_t>(out_elems) * sizeof(int32_t);
 
     auto dhdl = xrtDeviceOpen(0);
@@ -253,7 +203,7 @@ int main(int argc, char* argv[]) {
     topStencil.out0.wait();
     topStencil.wait();
 
-    long long cycle_count = adf::event::read_profiling(handle);
+    const long long cycle_count = adf::event::read_profiling(handle);
     adf::event::stop_profiling(handle);
 
     auto t1 = std::chrono::high_resolution_clock::now();
@@ -267,36 +217,68 @@ int main(int argc, char* argv[]) {
     const auto dur_us =
         std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
 
+    uint64_t* lap_start  = new uint64_t[iter_cnt];
+    uint64_t* lap_end    = new uint64_t[iter_cnt];
     uint64_t* lap_cycles = new uint64_t[iter_cnt];
+    uint64_t* flux_start = new uint64_t[iter_cnt];
+    uint64_t* flux_end   = new uint64_t[iter_cnt];
     uint64_t* flux_cycles = new uint64_t[iter_cnt];
+
     for (int it = 0; it < iter_cnt; ++it) {
         const int32_t* rec = outbuf + it * OUTPUT_RECORD_WORDS;
-        const uint64_t lap_start  = load_u64_from_i32_pair(rec + OUTPUT_DATA_WORDS + 0);
-        const uint64_t lap_end    = load_u64_from_i32_pair(rec + OUTPUT_DATA_WORDS + 2);
-        const uint64_t flux_start = load_u64_from_i32_pair(rec + OUTPUT_DATA_WORDS + 4);
-        const uint64_t flux_end   = load_u64_from_i32_pair(rec + OUTPUT_DATA_WORDS + 6);
-        lap_cycles[it] = lap_end - lap_start;
-        flux_cycles[it] = flux_end - flux_start;
+
+        lap_start[it]  = load_u64_from_i32_pair(rec + OUTPUT_DATA_WORDS + 0);
+        lap_end[it]    = load_u64_from_i32_pair(rec + OUTPUT_DATA_WORDS + 2);
+        flux_start[it] = load_u64_from_i32_pair(rec + OUTPUT_DATA_WORDS + 4);
+        flux_end[it]   = load_u64_from_i32_pair(rec + OUTPUT_DATA_WORDS + 6);
+
+        lap_cycles[it]  = lap_end[it] - lap_start[it];
+        flux_cycles[it] = flux_end[it] - flux_start[it];
     }
 
+    double avg_lap_cycles = 0.0;
+    double avg_flux_cycles = 0.0;
+    for (int it = 0; it < iter_cnt; ++it) {
+        avg_lap_cycles += static_cast<double>(lap_cycles[it]);
+        avg_flux_cycles += static_cast<double>(flux_cycles[it]);
+    }
+    avg_lap_cycles /= static_cast<double>(iter_cnt);
+    avg_flux_cycles /= static_cast<double>(iter_cnt);
+
     std::printf("========================================\n");
-    std::printf("Graph output event cycles : %lld\n", cycle_count);
-    std::printf("Output throughput         : %.3f MB/s\n", output_MBps);
-    std::printf("Gross graph throughput    : %.3f MB/s\n", gross_MBps);
-    std::printf("End-to-end time           : %lld us\n", static_cast<long long>(dur_us));
-    std::printf("========================================\n");
+    std::printf("Event API cycles        : %lld\n", cycle_count);
+    std::printf("Output throughput       : %.3f MB/s\n", output_MBps);
+    std::printf("Gross graph throughput  : %.3f MB/s\n", gross_MBps);
+    std::printf("========================================\n\n");
 
-    summarize_cycles("lap core", lap_cycles, iter_cnt);
-    summarize_cycles("flux core", flux_cycles, iter_cnt);
-
-    const int preview_n = (iter_cnt < PREVIEW) ? iter_cnt : PREVIEW;
-    print_cycle_preview("lap cycle preview:", lap_cycles, preview_n);
-    print_cycle_preview("flux cycle preview:", flux_cycles, preview_n);
-
+    std::printf("End-to-end time: %lld us\n", static_cast<long long>(dur_us));
     print_preview("output preview:", outbuf, PREVIEW);
     dump_output_matrix(out_path, outbuf, iter_cnt);
 
+    std::printf("\n========================================\n");
+    for (int it = 0; it < iter_cnt; ++it) {
+        std::printf("[iter %d] Explicit kernel cycle counters\n", it);
+        std::printf("  lap  : start=%llu end=%llu cycles=%llu (%.3f us)\n",
+                    static_cast<unsigned long long>(lap_start[it]),
+                    static_cast<unsigned long long>(lap_end[it]),
+                    static_cast<unsigned long long>(lap_cycles[it]),
+                    cycles_to_us(lap_cycles[it]));
+        std::printf("  flux : start=%llu end=%llu cycles=%llu (%.3f us)\n",
+                    static_cast<unsigned long long>(flux_start[it]),
+                    static_cast<unsigned long long>(flux_end[it]),
+                    static_cast<unsigned long long>(flux_cycles[it]),
+                    cycles_to_us(flux_cycles[it]));
+    }
+    std::printf("\n");
+    std::printf("avg lap cycles   : %.3f\n", avg_lap_cycles);
+    std::printf("avg flux cycles  : %.3f\n", avg_flux_cycles);
+    std::printf("========================================\n");
+
+    delete[] lap_start;
+    delete[] lap_end;
     delete[] lap_cycles;
+    delete[] flux_start;
+    delete[] flux_end;
     delete[] flux_cycles;
 
     for (int i = 0; i < NUM_INPUTS; ++i) {
