@@ -57,12 +57,12 @@ public:
         dimensions(k_flux.in[2]) = {COL};
 
         for (int i = 0; i < 4; ++i) {
-            dimensions(k_lap.out[i])      = {COL + 4};
-            dimensions(k_flux.in[i + 3])  = {COL + 4};
+            dimensions(k_lap.out[i])      = {COL};
+            dimensions(k_flux.in[i + 3])  = {COL};
         }
 
-        dimensions(k_flux.out[0]) = {COL + 8};
-        dimensions(out)           = {COL + 8};
+        dimensions(k_flux.out[0]) = {COL };
+        dimensions(out)           = {COL };
 #endif
 
     }

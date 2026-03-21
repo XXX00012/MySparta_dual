@@ -8,23 +8,6 @@ using namespace adf;
 
 #define kernel_load 14
 
-namespace {
-
-constexpr int LAP_DATA_WORDS = COL;
-constexpr int LAP_META_WORDS = 4;   // start_lo, start_hi, end_lo, end_hi
-
-inline void store_u64_to_i32_tail(int32_t* p, uint64_t v) {
-  p[0] = static_cast<int32_t>(static_cast<uint32_t>(v & 0xffffffffULL));
-  p[1] = static_cast<int32_t>(static_cast<uint32_t>((v >> 32) & 0xffffffffULL));
-}
-
-inline void store_kernel_time_tail(int32_t* base, uint64_t start, uint64_t end) {
-  store_u64_to_i32_tail(base + 0, start);
-  store_u64_to_i32_tail(base + 2, end);
-}
-
-} // namespace
-
 void hdiff_lap(input_buffer<int32_t>& row0,
                input_buffer<int32_t>& row1,
                input_buffer<int32_t>& row2,
@@ -57,8 +40,7 @@ void hdiff_lap(input_buffer<int32_t>& row0,
   v8int32 lap_ij = null_v8int32();
   v8int32 lap_0  = null_v8int32();
 
-  aie::tile tile = aie::tile::current();
-  const uint64_t kernel_start = tile.cycles();
+
 
   // Preload
   data_buf1 = upd_w(data_buf1, 0, *row3_ptr++);
@@ -70,6 +52,7 @@ void hdiff_lap(input_buffer<int32_t>& row0,
     chess_prepare_for_pipelining
     chess_loop_range(1, ) {
       v16int32 flux_sub;
+
 
       acc_0 = lmul8(data_buf2, 2, 0x76543210, coeffs_rest, 0, 0x00000000);
       acc_1 = lmul8(data_buf2, 1, 0x76543210, coeffs_rest, 0, 0x00000000);
@@ -168,10 +151,4 @@ void hdiff_lap(input_buffer<int32_t>& row0,
       data_buf1 = upd_w(data_buf1, 1, *(row3_ptr));
     }
 
-  const uint64_t kernel_end = tile.cycles();
-
-  store_kernel_time_tail(out_flux1.data() + LAP_DATA_WORDS, kernel_start, kernel_end);
-  store_kernel_time_tail(out_flux2.data() + LAP_DATA_WORDS, kernel_start, kernel_end);
-  store_kernel_time_tail(out_flux3.data() + LAP_DATA_WORDS, kernel_start, kernel_end);
-  store_kernel_time_tail(out_flux4.data() + LAP_DATA_WORDS, kernel_start, kernel_end);
-}
+ }
