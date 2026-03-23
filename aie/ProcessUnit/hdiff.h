@@ -1,10 +1,7 @@
 #pragma once
 #include <adf.h>
 #include <cstdint>
-
 using namespace adf;
-
-
 
 extern "C" {
 void hdiff_lap(
